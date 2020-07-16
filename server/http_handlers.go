@@ -1,7 +1,11 @@
 package server
 
 import (
+	"crypto/aes"
 	"fmt"
+	"github.com/thoas/picfit/crypt/aes256cbc"
+	"github.com/thoas/picfit/image"
+	"github.com/thoas/picfit/logger"
 	"net/http"
 	"time"
 
@@ -70,6 +74,16 @@ func (h handlers) display(c *gin.Context) error {
 	return nil
 }
 
+func (h handlers) secureDisplay(c *gin.Context) error {
+
+	err := h.securePath(c)
+	if err != nil {
+		return err
+	}
+
+	return h.display(c)
+}
+
 // upload uploads an image to the destination storage
 func (h handlers) upload(c *gin.Context) error {
 	multipartPayload := new(payload.Multipart)
@@ -79,7 +93,6 @@ func (h handlers) upload(c *gin.Context) error {
 	}
 
 	file, err := h.processor.Upload(multipartPayload)
-
 	if err != nil {
 		return err
 	}
@@ -129,14 +142,32 @@ func (h handlers) get(c *gin.Context) error {
 		return err
 	}
 
+	imageSizes, err := h.processor.GetSizes(file)
+	if err != nil {
+		return err
+	}
+
 	c.JSON(http.StatusOK, gin.H{
 		"filename": file.Filename(),
 		"path":     file.Path(),
 		"url":      file.URL(),
 		"key":      file.Key,
+		"width":    imageSizes.Width,
+		"height":   imageSizes.Height,
+		"bytes":    imageSizes.Bytes,
 	})
 
 	return nil
+}
+
+func (h handlers) secureGet(c *gin.Context) error {
+
+	err := h.securePath(c)
+	if err != nil {
+		return err
+	}
+
+	return h.get(c)
 }
 
 // redirect redirects to the image using base url from storage
@@ -153,9 +184,94 @@ func (h handlers) redirect(c *gin.Context) error {
 	return nil
 }
 
+func (h handlers) secureRedirect(c *gin.Context) error {
+
+	err := h.securePath(c)
+	if err != nil {
+		return err
+	}
+
+	return h.redirect(c)
+}
+
 func pprofHandler(h http.HandlerFunc) gin.HandlerFunc {
 	handler := http.HandlerFunc(h)
 	return func(c *gin.Context) {
 		handler.ServeHTTP(c.Writer, c.Request)
 	}
+}
+
+func (h handlers) info(c *gin.Context) error {
+
+	path := c.Query("path")
+
+	if path == "" {
+		c.String(http.StatusBadRequest, "Request should contains path string")
+		return nil
+	}
+
+	storage := h.processor.GetStorageByFileExist(path)
+	if storage == nil {
+		return failure.ErrFileNotExists
+	}
+
+	img := &image.ImageFile{
+		Filepath: path,
+		Storage:  storage,
+	}
+
+	imgSizes, err := h.processor.GetSizes(img)
+	if err != nil {
+		return err
+	}
+
+	c.JSON(http.StatusOK, gin.H{
+		"filename": img.Filename(),
+		"path":     img.Path(),
+		"url":      img.URL(),
+		"width":    imgSizes.Width,
+		"height":   imgSizes.Height,
+		"bytes":    imgSizes.Bytes,
+	})
+
+	return nil
+}
+
+func (h handlers) exist(c *gin.Context) error {
+
+	path := c.Query("path")
+
+	if path == "" {
+		c.String(http.StatusBadRequest, "Request should contains path string")
+		return nil
+	}
+
+	storage := h.processor.GetStorageByFileExist(path)
+	if storage == nil {
+		return failure.ErrFileNotExists
+	}
+
+	return nil
+}
+
+func (h handlers) securePath(c *gin.Context) error {
+
+	parameters := c.MustGet("parameters").(map[string]interface{})
+	encodedPath := parameters["path"].(string)
+
+	path, err := aes256cbc.Decode(
+		encodedPath,
+		h.processor.SecurePathKey[:aes.BlockSize],
+		h.processor.SecurePathKey[aes.BlockSize:],
+	)
+	if err != nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return err
+	}
+
+	h.processor.Logger.Info("Path decoded", logger.String("path", path))
+
+	h.processor.SetSecuredOptions(c, path, "25")
+
+	return nil
 }

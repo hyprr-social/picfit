@@ -1,6 +1,7 @@
 package engine
 
 import (
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -116,6 +117,18 @@ func (e Engine) Transform(output *image.ImageFile, operations []EngineOperation)
 	return output, err
 }
 
+func (e Engine) GetSizes(buf []byte) (*image.ImageSizes, error) {
+	for j := range e.backends {
+		imageSizes, err := e.backends[j].GetSizes(buf)
+		if err != nil {
+			return nil, err
+		}
+		return imageSizes, nil
+	}
+
+	return nil, errors.New("image backend not configured")
+}
+
 func operate(b backend.Backend, img *image.ImageFile, operation Operation, options *backend.Options) ([]byte, error) {
 	switch operation {
 	case Noop:
@@ -132,6 +145,8 @@ func operate(b backend.Backend, img *image.ImageFile, operation Operation, optio
 		return b.Fit(img, options)
 	case Flat:
 		return b.Flat(img, options)
+	case Blur:
+		return b.Blur(img, options)
 	default:
 		return nil, fmt.Errorf("Operation not found for %s", operation)
 	}

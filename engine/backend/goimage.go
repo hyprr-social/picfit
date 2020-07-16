@@ -2,6 +2,7 @@ package backend
 
 import (
 	"bytes"
+	"encoding/binary"
 	"fmt"
 	"image"
 	"image/color/palette"
@@ -228,6 +229,40 @@ func (e *GoImage) ToBytes(img image.Image, format imaging.Format, quality int) (
 	}
 
 	return buf.Bytes(), nil
+}
+
+func (e *GoImage) GetSizes(buf []byte) (*imagefile.ImageSizes, error) {
+
+	im, err := decode(bytes.NewReader(buf))
+	if err != nil {
+		return nil, err
+	}
+
+	width, height := imageSize(im)
+
+	return &imagefile.ImageSizes{
+		Width:  width,
+		Height: height,
+		Bytes:  binary.Size(buf),
+	}, nil
+}
+
+func (e *GoImage) Blur(img *imagefile.ImageFile, options *Options) ([]byte, error) {
+	if options.Format == imaging.GIF {
+		content, err := e.TransformGIF(img, options, imaging.Thumbnail)
+		if err != nil {
+			return nil, err
+		}
+
+		return content, nil
+	}
+
+	imageSource, err := e.Source(img)
+	if err != nil {
+		return nil, err
+	}
+
+	return e.ToBytes(imaging.Blur(imageSource, options.Blur), options.Format, options.Quality)
 }
 
 func encode(w io.Writer, img image.Image, format imaging.Format, quality int) error {
